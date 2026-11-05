@@ -20,7 +20,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             # Переходим в директорию проекта
-            cd /home/main_topics/
+            cd /home/main_topics/main_topics/
                   git pull
                   sudo systemctl stop topicsbot
                   sudo systemctl enable topicsbot
