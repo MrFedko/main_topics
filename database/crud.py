@@ -1,3 +1,4 @@
+import re
 import sqlite3
 
 
@@ -38,6 +39,35 @@ class Database:
     answer_status TEXT,
     notes TEXT
 );""")
+
+    def create_search_table(self):
+        # 2. Создаем виртуальную таблицу FTS5 (индексируем только ключевые поля для поиска)
+        self.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS topics_fts USING fts5(
+                    restaurant,
+                    topic,
+                    question,
+                    answer,
+                    content='topics',
+                    content_rowid='id'
+                );""")
+
+        # 3. Триггеры для автоматической синхронизации FTS с таблицей topics
+        self.execute("""CREATE TRIGGER IF NOT EXISTS topics_ai AFTER INSERT ON topics BEGIN
+                    INSERT INTO topics_fts(rowid, restaurant, topic, question, answer) 
+                    VALUES (new.id, new.restaurant, new.topic, new.question, new.answer);
+                END;""")
+
+        self.execute("""CREATE TRIGGER IF NOT EXISTS topics_ad AFTER DELETE ON topics BEGIN
+                    INSERT INTO topics_fts(topics_fts, rowid, restaurant, topic, question, answer) 
+                    VALUES('delete', old.id, old.restaurant, old.topic, old.question, old.answer);
+                END;""")
+
+        self.execute("""CREATE TRIGGER IF NOT EXISTS topics_au AFTER UPDATE ON topics BEGIN
+                    INSERT INTO topics_fts(topics_fts, rowid, restaurant, topic, question, answer) 
+                    VALUES('delete', old.id, old.restaurant, old.topic, old.question, old.answer);
+                    INSERT INTO topics_fts(rowid, restaurant, topic, question, answer) 
+                    VALUES (new.id, new.restaurant, new.topic, new.question, new.answer);
+                END;""")
 
     def create_topics_ids_table(self):
         self.execute("""CREATE TABLE topics_ids (
@@ -98,12 +128,41 @@ class Database:
         result = self.execute(query, params=(question_id,), fetchone=True)
         return result if result else None
 
+    def search(self, query_str: str, limit: int = 10):
+        """Человеческий поиск по полям restaurant, topic, question, answer.
 
-# def main():
-#     db = Database("../topics.db")
-#     all_topics = db.get_all_topics("topics")
-#     db.upload_topics_ids(all_topics)
-#
-#
-# if __name__ == "__main__":
-#     main()
+        Возвращает список полных записей (строк), отсортированных по релевантности.
+        """
+        """Человеческий поиск с очисткой от спецсимволов FTS5."""
+        # Оставляем только буквы, цифры и пробелы, убирая ?, !, -, *, кавычки и т.д.
+        cleaned_query = re.sub(r'[^\w\s]', ' ', query_str)
+
+        words = cleaned_query.strip().split()
+        if not words:
+            return []
+
+        # Превращаем каждое слово в префиксный поиск (например: "терраса" -> "терраса*")
+        fts_query = " ".join([f"{word}*" for word in words])
+
+        # Запрос объединяет результаты FTS с оригинальной таблицей topics,
+        # забирая все поля (t.*) и сортируя по релевантности (bm25)
+        sql = """
+                SELECT t.*, bm25(topics_fts) as score
+                FROM topics_fts
+                JOIN topics t ON t.id = topics_fts.rowid
+                WHERE topics_fts MATCH ?
+                ORDER BY score
+                LIMIT ?
+            """
+        return self.execute(sql, (fts_query, limit), fetchall=True)
+
+
+def main():
+    db = Database("../topics.db")
+    db.create_table_topics()
+    db.create_search_table()
+    db.create_topics_ids_table()
+
+
+if __name__ == "__main__":
+    main()

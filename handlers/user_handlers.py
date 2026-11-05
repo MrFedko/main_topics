@@ -1,3 +1,4 @@
+import asyncio
 import glob
 import os
 
@@ -10,7 +11,8 @@ from PIL import Image
 from loader import dataBase, messageBuilder, client
 from .menuLists import list_start_menu, list_topics_by_restaurant, list_questions
 from data.config import settings
-from .keyboards import menu_cd, back_button_final
+from .keyboards import menu_cd, back_button_final, back_button_to_start
+from utils.states.user import user_panel
 
 router = Router()
 
@@ -20,6 +22,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     await list_start_menu(message)
 
+
 @router.callback_query(
     menu_cd.filter(MF.level == 0), flags={"chat_action": "typing"}
 )
@@ -28,6 +31,17 @@ async def start_menu_callback(
         callback_data: menu_cd,
         state: FSMContext,
 ):
+    # 🔴 сначала удалим старые сообщения (если были)
+    old_data = await state.get_data()
+    old_messages = old_data.get("extra_messages", [])
+
+    for msg_id in old_messages:
+        try:
+            await call.bot.delete_message(call.message.chat.id, msg_id)
+        except:
+            pass
+
+    await state.update_data(extra_messages=[])
     await state.clear()
     await list_start_menu(call)
 
@@ -35,6 +49,11 @@ async def start_menu_callback(
 @router.message(Command("upload"))
 async def cmd_reboot(message: types.Message, state: FSMContext):
     await state.clear()
+    dataBase.clean_all_values()
+    for sheet_id in settings.worksheet_ids.values():
+        await client.upload_sheets_to_db(sheet_id,"topics", dataBase)
+    topics = dataBase.get_all_topics("topics")
+    dataBase.upload_topics_ids(topics)
     await message.answer("Данные обновлены, фотографии загружены, всё готово!")
     await list_start_menu(message)
 
@@ -122,4 +141,41 @@ async def answer_by_question_callback(
             await asyncio.sleep(0.05)
 
         # 💾 сохраняем ID сообщений
+    await state.update_data(extra_messages=sent_messages)
+
+
+@router.callback_query(
+    menu_cd.filter(MF.level == 4), flags={"chat_action": "typing"}
+)
+async def searching_callback(
+        call: types.CallbackQuery,
+        callback_data: menu_cd,
+        state: FSMContext,
+):
+    await state.set_state(user_panel.search)
+    text = "Введите текст для поиска:"
+    await call.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=back_button_to_start(callback_data))
+
+
+@router.message(user_panel.search, flags={"chat_action": "typing"})
+async def search_message(message: types.Message, state: FSMContext):
+    await state.clear()
+    search_text = message.text
+    results = dataBase.search(search_text)
+    # список для хранения ID сообщений
+    sent_messages = []
+    if results:
+        text = "Результаты поиска:\n\n"
+        for i, result in enumerate(results):
+            is_last = i == len(results) - 1
+            text = messageBuilder.build_answer_text(result)
+            msg = await message.answer(text, parse_mode="HTML",
+                                 reply_markup=back_button_to_start(menu_cd) if is_last else None)
+            sent_messages.append(msg.message_id if not is_last else None)
+            await asyncio.sleep(0.5)
+    else:
+        await message.answer("По вашему запросу ничего не найдено.", parse_mode="HTML", reply_markup=back_button_to_start(menu_cd))
     await state.update_data(extra_messages=sent_messages)

@@ -26,6 +26,13 @@ def start_keyboard() -> InlineKeyboardMarkup:
                 ).pack()
             )
         )
+    search_button = InlineKeyboardButton(
+        text="🔍 Поиск по всем темам",
+        callback_data=menu_cd(
+            level=4
+        ).pack()
+    )
+    buttons.append(search_button)
     markup.row(*buttons, width=1)
     return markup.as_markup()
 
@@ -96,6 +103,17 @@ def back_button_final(callback_data: menu_cd) -> InlineKeyboardMarkup:
             level=2,
             restaurant_sheet_id=callback_data.restaurant_sheet_id,
             topic_id=callback_data.topic_id,
+        ).pack()
+    )
+    markup.row(back_button)
+    return markup.as_markup()
+
+def back_button_to_start(callback_data: menu_cd) -> InlineKeyboardMarkup:
+    markup = InlineKeyboardBuilder()
+    back_button = InlineKeyboardButton(
+        text="⬅️ Назад",
+        callback_data=menu_cd(
+            level=0
         ).pack()
     )
     markup.row(back_button)
